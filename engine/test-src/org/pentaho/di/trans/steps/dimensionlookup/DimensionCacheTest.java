@@ -41,7 +41,11 @@ public class DimensionCacheTest {
     int[] keyIndexes = new int[] {};
     int fromDateIndex = 0;
     int toDateIndex = 1;
-    DimensionCache dc = new DimensionCache( rowMeta, keyIndexes, fromDateIndex, toDateIndex );
+    
+    DimensionLookup dl = new DimensionLookup();
+    DimensionLookupData dla = new DimensionLookupData();
+    DimensionLookupMeta dlm = new DimensionLookupMeta();
+    DimensionCache dc = new DimensionCache( dl, dla, dlm );
 
     long t0 = 1425300000000L; // (3/2/15 4:40 PM)
     final Date D1 = new Timestamp( t0 );
