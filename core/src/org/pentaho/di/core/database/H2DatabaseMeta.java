@@ -188,6 +188,7 @@ public class H2DatabaseMeta extends BaseDatabaseMeta implements DatabaseInterfac
     int type = v.getType();
     switch ( type ) {
       case ValueMetaInterface.TYPE_DATE:
+      case ValueMetaInterface.TYPE_TIMESTAMP:
         retval += "TIMESTAMP";
         break;
       case ValueMetaInterface.TYPE_BOOLEAN:

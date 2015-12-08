@@ -22,6 +22,8 @@
 
 package org.pentaho.di.trans.steps.dimensionlookup;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
@@ -29,6 +31,7 @@ import java.util.List;
 import org.pentaho.di.core.CheckResult;
 import org.pentaho.di.core.CheckResultInterface;
 import org.pentaho.di.core.Const;
+import org.pentaho.di.core.ProvidesModelerMeta;
 import org.pentaho.di.core.SQLStatement;
 import org.pentaho.di.core.database.Database;
 import org.pentaho.di.core.database.DatabaseMeta;
@@ -71,7 +74,7 @@ import org.w3c.dom.Node;
  */
 
 @SuppressWarnings("deprecation")
-public class DimensionLookupMeta extends BaseStepMeta implements StepMetaInterface
+public class DimensionLookupMeta extends BaseStepMeta implements StepMetaInterface, ProvidesModelerMeta
 {
 	private static Class<?> PKG = DimensionLookupMeta.class; // for i18n purposes, needed by Translator2!!   $NON-NLS-1$
 
@@ -2069,4 +2072,50 @@ public class DimensionLookupMeta extends BaseStepMeta implements StepMetaInterfa
     public void setUseBatchUpdate(boolean useBatchUpdate) {
       this.useBatchUpdate = useBatchUpdate;
     }
+    
+    protected RowMetaInterface getDatabaseTableFields( Database db, String schemaName, String tableName ) throws KettleDatabaseException {
+        // First try without connecting to the database... (can be S L O W)
+        String schemaTable = databaseMeta.getQuotedSchemaTableCombination( schemaName, tableName );
+        RowMetaInterface extraFields = db.getTableFields( schemaTable );
+        if ( extraFields == null ) { // now we need to connect
+          db.connect();
+          extraFields = db.getTableFields( schemaTable );
+        }
+        return extraFields;
+      }
+
+      Database createDatabaseObject() {
+        return new Database( loggingObject, databaseMeta );
+      }
+
+      @Override 
+      public RowMeta getRowMeta( final StepDataInterface stepData ) {
+        try {
+          return (RowMeta) getDatabaseTableFields( createDatabaseObject(), schemaName, tableName );
+        } catch ( KettleDatabaseException e ) {
+          log.logError( "", e );
+          return new RowMeta();
+        }
+      }
+
+      @Override 
+      public List<String> getDatabaseFields() {
+        ArrayList<String> fields = new ArrayList<String>( fieldLookup.length + keyLookup.length );
+        fields.addAll( Arrays.asList( fieldLookup ) );
+        fields.addAll( Arrays.asList( keyLookup ) );
+        return fields;
+      }
+
+      @Override 
+      public List<String> getStreamFields() {
+        ArrayList<String> fields = new ArrayList<String>( fieldLookup.length + keyLookup.length );
+        fields.addAll( Arrays.asList( fieldStream ) );
+        fields.addAll( Arrays.asList( keyStream ) );
+        return fields;
+      }
+
+	@Override
+	public String getMissingDatabaseConnectionInformationMessage() {
+		return null;
+	}
 }

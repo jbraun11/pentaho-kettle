@@ -56,7 +56,7 @@ public class DimensionCache
 		this.data = data;
 		
 		DatabaseMeta dbMeta = new DatabaseMeta();
-		dbMeta.setDatabaseType("DIMCACHE");
+		dbMeta.setDatabaseType("H2");
 		dbMeta.setName("cache_db");
 		dbMeta.setAccessType(DatabaseMeta.TYPE_ACCESS_NATIVE);
 		dbMeta.setDBName("mem:");

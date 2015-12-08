@@ -96,6 +96,15 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			TransMeta transMeta, Trans trans) {
 		super(stepMeta, stepDataInterface, copyNr, transMeta, trans);
 	}
+	
+	protected void setMeta( DimensionLookupMeta meta ) {
+	    this.meta = meta;
+	}
+
+	protected void setData( DimensionLookupData data ) {
+	    this.data = data;
+	}
+
 
 	private void setTechKeyCreation(int method) {
 		techKeyCreation = method;
@@ -655,7 +664,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 				 */
 
 				technicalKey = dimInsert(row, technicalKey,
-						true, valueVersion, valueDateFrom, valueDateTo, returnRowToDate, returnRowFromDate, returnRowTechnicalKey);
+						true, valueVersion, valueDateFrom, valueDateTo, returnRowTechnicalKey);
 
 				incrementLinesOutput();
 				returnRow = new Object[data.returnRowMeta.size()];
@@ -778,7 +787,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 
 					// update our technicalKey with the return of the insert
 					technicalKey = dimInsert(row, technicalKey, false,
-							valueNewVersion, valueDateFrom, valueDateTo, returnRowToDate, returnRowFromDate, returnRowTechnicalKey);
+							valueNewVersion, valueDateFrom, valueDateTo, returnRowTechnicalKey);
 					incrementLinesOutput();
 				}
 				if (punch) // On of the fields we have to punch through has changed!
@@ -1104,7 +1113,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		}
 	}
 
-	private boolean isAutoIncrement() {
+	protected boolean isAutoIncrement() {
 		return techKeyCreation == CREATION_METHOD_AUTOINC;
 	}
 
@@ -1114,16 +1123,13 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 	 * @throws IOException 
 	 * @throws ClassNotFoundException 
 	 */
-	public Long dimInsert(Object[] row, Long technicalKey, boolean newEntry, Long versionNr, Date dateFrom,
-			Date dateTo, Date returnRowToDate, Date returnRowFromDate, Long returnRowTechnicalKey) throws KettleException, ClassNotFoundException, IOException 
-	{
+	public Long dimInsert(Object[] row, Long technicalKey, boolean newEntry,
+		    Long versionNr, Date dateFrom, Date dateTo, Long returnRowTechnicalKey ) throws KettleException {
 		// data.prepStatementInsert == null && data.prepStatementUpdate == null)
 		// first time: construct prepared statement
 		if (data.prepStatementInsert == null || data.prepStatementUpdatePrevVersion ==  null) {
 			createDimInsertStatement();
 		}
-		
-		returnRowToDate = dateFrom;
 
 		Object[] insertRow = new Object[data.insertRowMeta.size()];
 		int insertIndex = 0;
@@ -1226,7 +1232,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			
 			switch (data.startDateChoice) {
 			case DimensionLookupMeta.START_DATE_ALTERNATIVE_NONE:
-				updatePrevVersionRow[updateIndex++] = returnRowToDate;
+				updatePrevVersionRow[updateIndex++] = dateFrom;
 				break;
 			case DimensionLookupMeta.START_DATE_ALTERNATIVE_SYSDATE:
 				updatePrevVersionRow[updateIndex++] = new Date();
@@ -1248,7 +1254,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			}
 			
 			// new date from
-			updatePrevVersionRow[updateIndex++] = returnRowFromDate;
+			updatePrevVersionRow[updateIndex++] = dateFrom;
 
 			// The special update fields...
 			//
@@ -1268,7 +1274,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 				}
 			}
 
-			updatePrevVersionRow[updateIndex++] = returnRowTechnicalKey;
+			updatePrevVersionRow[updateIndex++] = technicalKey;
 
 			if (log.isRowLevel())
 				logRowlevel("UPDATE using rupd="

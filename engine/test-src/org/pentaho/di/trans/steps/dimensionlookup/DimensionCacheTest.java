@@ -22,19 +22,42 @@
 
 package org.pentaho.di.trans.steps.dimensionlookup;
 
+import static org.mockito.Matchers.anyString;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.Date;
 
 import org.junit.Test;
+import org.pentaho.di.core.database.Database;
+import org.pentaho.di.core.database.DatabaseMeta;
+import org.pentaho.di.core.exception.KettleDatabaseException;
 import org.pentaho.di.core.row.RowMeta;
 import org.pentaho.di.core.row.RowMetaInterface;
 import org.pentaho.di.core.row.value.ValueMetaTimestamp;
 import org.pentaho.di.core.util.Assert;
+import org.pentaho.di.trans.Trans;
+import org.pentaho.di.trans.TransMeta;
+import org.pentaho.di.trans.step.StepMeta;
+import org.pentaho.di.trans.step.StepPartitioningMeta;
 
 public class DimensionCacheTest {
+	
+  private DatabaseMeta databaseMeta;
+
+  private StepMeta stepMeta;
+
+  private DimensionLookup dimensionLookup, dimensionLookupSpy;
+  private DimensionLookupMeta dimensionLookupMeta;
+  private DimensionLookupData dimensionLookupData;
 
   @Test
-  public void testCompareDateInterval() {
+  public void testCompareDateInterval() throws KettleDatabaseException, SQLException {
     RowMetaInterface rowMeta = new RowMeta();
     rowMeta.addValueMeta( new ValueMetaTimestamp( "DATE_FROM" ) );
     rowMeta.addValueMeta( new ValueMetaTimestamp( "DATE_TO" ) );
@@ -42,10 +65,41 @@ public class DimensionCacheTest {
     int fromDateIndex = 0;
     int toDateIndex = 1;
     
-    DimensionLookup dl = new DimensionLookup();
-    DimensionLookupData dla = new DimensionLookupData();
-    DimensionLookupMeta dlm = new DimensionLookupMeta();
-    DimensionCache dc = new DimensionCache( dl, dla, dlm );
+    databaseMeta = mock( DatabaseMeta.class );
+    doReturn( "" ).when( databaseMeta ).quoteField( anyString() );
+
+    dimensionLookupMeta = mock( DimensionLookupMeta.class );
+    doReturn( databaseMeta ).when( dimensionLookupMeta ).getDatabaseMeta();
+    doReturn( new String[]{} ).when( dimensionLookupMeta ).getKeyLookup();
+    doReturn( new String[]{} ).when( dimensionLookupMeta ).getFieldLookup();
+    doReturn( new int[]{} ).when( dimensionLookupMeta ).getFieldUpdate();
+
+    stepMeta = mock( StepMeta.class );
+    doReturn( "step" ).when( stepMeta ).getName();
+    doReturn( mock( StepPartitioningMeta.class ) ).when( stepMeta ).getTargetStepPartitioningMeta();
+    doReturn( dimensionLookupMeta ).when( stepMeta ).getStepMetaInterface();
+
+    Database db = mock( Database.class );
+    doReturn( mock( Connection.class ) ).when( db ).getConnection();
+
+    dimensionLookupData = mock( DimensionLookupData.class );
+    dimensionLookupData.db = db;
+    dimensionLookupData.keynrs = new int[] { };
+    dimensionLookupData.fieldnrs = new int[] { };
+
+    TransMeta transMeta = mock( TransMeta.class );
+    doReturn( stepMeta ).when( transMeta ).findStep( anyString() );
+
+    dimensionLookup = new DimensionLookup( stepMeta, dimensionLookupData, 1, transMeta, mock( Trans.class ) );
+    dimensionLookup.setData( dimensionLookupData );
+    dimensionLookup.setMeta( dimensionLookupMeta );
+    dimensionLookupSpy = spy( dimensionLookup );
+    doReturn( stepMeta ).when( dimensionLookupSpy ).getStepMeta();
+    doReturn( false ).when( dimensionLookupSpy ).isRowLevel();
+    doReturn( false ).when( dimensionLookupSpy ).isDebug();
+    doReturn( true ).when( dimensionLookupSpy ).isAutoIncrement();
+    doNothing().when( dimensionLookupSpy ).logDetailed( anyString() );
+    DimensionCache dc = new DimensionCache( dimensionLookup, dimensionLookupMeta, dimensionLookupData );
 
     long t0 = 1425300000000L; // (3/2/15 4:40 PM)
     final Date D1 = new Timestamp( t0 );
