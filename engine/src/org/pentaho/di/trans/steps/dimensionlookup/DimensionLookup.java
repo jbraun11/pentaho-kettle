@@ -84,10 +84,6 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 	private DimensionLookupMeta meta;
 	private DimensionLookupData data;
 	private DimensionCache cache;
-	private String[] returnFieldNames;
-	private Object[] updatePrevVersionRow;
-	private int returnRowTechnicalKeyIndex = 0;
-	private int returnRowVersionFieldIndex = 1;
 
 	int[] columnLookupArray = null;
 
@@ -139,8 +135,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		{
 			setOutputDone(); // signal end to receiver(s)
 			return false;
-		}
-		updatePrevVersionRow = null;		
+		}	
 
 		if (first) {
 			first = false;
@@ -306,12 +301,6 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			executeBatch(data.prepStatementPunchThrough);
 			data.db.commit();
 			
-			executeBatch(cache.prepStatementInsert);
-			executeBatch(cache.prepStatementUpdatePrevVersion);
-			executeBatch(cache.prepStatementDimensionUpdate);
-			executeBatch(cache.prepStatementPunchThrough);
-			cache.db.commit();
-			
 			commitcounter = 0;
 		}
 		incrementLinesInput();
@@ -465,8 +454,6 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 				data.preloadKeyIndexes[i] = data.returnRowMeta.indexOfValue(meta
 						.getKeyLookup()[i]); // the field in the table
 			}
-			data.preloadFromDateIndex = data.returnRowMeta.indexOfValue(meta.getDateFrom());
-			data.preloadToDateIndex = data.returnRowMeta.indexOfValue(meta.getDateTo());
 			
 			if (data.cacheKeyRowMeta==null)
             {
@@ -483,17 +470,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			//create and add all rows to cache
 			
 			logBasic("Adding rows to cache...");
-			cache.setRowCache(rset);
-
-			returnFieldNames = data.returnRowMeta.getFieldNames();
-
-			for (int i = 0; i < data.returnRowMeta.size(); i++) {
-				if (returnFieldNames[i].equals(meta.getKeyField())) {
-					returnRowTechnicalKeyIndex = i;
-				} else if (returnFieldNames[i].equals(meta.getVersionField())) {
-					returnRowVersionFieldIndex = i;
-				}
-			}		
+			cache.setRowCache(rset, data);
 
 			// Also see what indexes to take to populate the lookup row...
 			// We only ever compare indexes and the lookup date in the cache,
@@ -535,9 +512,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		Long valueVersion;
 		Date valueDateFrom = null;
 		Date valueDateTo = null;
-		Date returnRowFromDate = null;
-		Date returnRowToDate = null;
-		Long returnRowTechnicalKey = null;
+		Long returnRowTechnicalKey;
 
 		// Determine the lookup date ("now") if we have a field that carries
 		// said
@@ -664,7 +639,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 				 */
 
 				technicalKey = dimInsert(row, technicalKey,
-						true, valueVersion, valueDateFrom, valueDateTo, returnRowTechnicalKey);
+						true, valueVersion, valueDateFrom, valueDateTo, null);
 
 				incrementLinesOutput();
 				returnRow = new Object[data.returnRowMeta.size()];
@@ -705,12 +680,10 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 							+ data.returnRowMeta.getString(returnRow));				
 				
 				// What's the key? The first value of the return row
-				technicalKey = data.returnRowMeta.getInteger(returnRow, returnRowTechnicalKeyIndex);
-				valueDateTo = (Date) returnRow[data.preloadToDateIndex];
-				returnRowFromDate = (Date) returnRow[data.preloadFromDateIndex];
-				returnRowTechnicalKey = data.returnRowMeta.getInteger(returnRow, returnRowTechnicalKeyIndex);
-				returnRowToDate = (Date) returnRow[data.preloadToDateIndex];
-				valueVersion = data.returnRowMeta.getInteger(returnRow, returnRowVersionFieldIndex);
+				technicalKey = (Long) returnRow[data.techKeyIndex];
+				valueVersion = (Long) returnRow[data.versionIndex];
+				valueDateTo = (Date) returnRow[data.toDateIndex];
+				returnRowTechnicalKey = (Long) returnRow[data.techKeyIndex];
 				
 				// If everything is the same: don't do anything
 				// If one of the fields is different: insert or update
@@ -1089,6 +1062,8 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			data.lookupRowMeta.addValueMeta(new ValueMeta(meta.getDateTo(),
 					ValueMetaInterface.TYPE_DATE));
 		}
+		
+		
 
 		try {
 			logDetailed("Dimension Lookup setting preparedStatement to [" + sql
@@ -1097,6 +1072,14 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 					.prepareStatement(databaseMeta.stripCR(sql));
 			cache.prepStatementLookup = cache.db.getConnection()
 					.prepareStatement(databaseMeta.stripCR(sql));
+
+			data.returnRowMeta = data.db.getMetaFromRow(null, data.prepStatementLookup.getMetaData());
+			
+			data.techKeyIndex = data.returnRowMeta.indexOfValue(meta.getKeyField());
+			data.versionIndex = data.returnRowMeta.indexOfValue(meta.getVersionField());
+			data.fromDateIndex = data.returnRowMeta.indexOfValue(meta.getDateFrom());
+			data.toDateIndex = data.returnRowMeta.indexOfValue(meta.getDateTo());
+			
 			if (databaseMeta.supportsSetMaxRows()) {
 				data.prepStatementLookup.setMaxRows(1); // alywas get only 1
 														// line back!
@@ -1212,93 +1195,11 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		data.db.setValues(data.insertRowMeta, insertRow, data.prepStatementInsert);
 		data.db.insertRow(data.prepStatementInsert, !isAutoIncrement(), false);
 		
-		// INSERT NEW VALUE INTO CACHE!
-		if (meta.getCacheSize() >= 0) 
-		{
-			cache.db.setValues(data.insertRowMeta, insertRow, cache.prepStatementInsert);
-			cache.db.insertRow(cache.prepStatementInsert, !isAutoIncrement(), false);
-		}
-
-		if (!newEntry) // we have to update the previous version in the dimension!
-		{
-			/*
-			 * UPDATE d_customer SET dateto = val_datfrom , last_updated = <now>
-			 * , last_version = false WHERE keylookup[] = keynrs[] AND
-			 * techkey = returnrowtechkey;
-			 */
-			 
-			updatePrevVersionRow = new Object[data.updateRowMeta.size()];
-			int updateIndex = 0;
-			
-			switch (data.startDateChoice) {
-			case DimensionLookupMeta.START_DATE_ALTERNATIVE_NONE:
-				updatePrevVersionRow[updateIndex++] = dateFrom;
-				break;
-			case DimensionLookupMeta.START_DATE_ALTERNATIVE_SYSDATE:
-				updatePrevVersionRow[updateIndex++] = new Date();
-				break;
-			case DimensionLookupMeta.START_DATE_ALTERNATIVE_START_OF_TRANS:
-				updatePrevVersionRow[updateIndex++] = getTrans().getCurrentDate();
-				break;
-			case DimensionLookupMeta.START_DATE_ALTERNATIVE_NULL:
-				updatePrevVersionRow[updateIndex++] = null;
-				break;
-			case DimensionLookupMeta.START_DATE_ALTERNATIVE_COLUMN_VALUE:
-				updatePrevVersionRow[updateIndex++] = data.inputRowMeta.getDate(row,
-						data.startDateFieldIndex);
-				break;
-			default:
-				throw new KettleStepException(BaseMessages.getString(
-						"DimensionLookup.Exception.IllegalStartDateSelection",
-						Integer.toString(data.startDateChoice)));
-			}
-			
-			// new date from
-			updatePrevVersionRow[updateIndex++] = dateFrom;
-
-			// The special update fields...
-			//
-			for (int i = 0; i < meta.getFieldUpdate().length; i++) {
-				switch (meta.getFieldUpdate()[i]) {
-				case DimensionLookupMeta.TYPE_UPDATE_DATE_INSUP:
-					updatePrevVersionRow[updateIndex++] = new Date();
-					break;
-				case DimensionLookupMeta.TYPE_UPDATE_LAST_VERSION:
-					updatePrevVersionRow[updateIndex++] = Boolean.FALSE;
-					break; // Never the last version on this update
-				case DimensionLookupMeta.TYPE_UPDATE_DATE_UPDATED:
-					updatePrevVersionRow[updateIndex++] = new Date();
-					break;
-				default:
-					break;
-				}
-			}
-
-			updatePrevVersionRow[updateIndex++] = technicalKey;
-
-			if (log.isRowLevel())
-				logRowlevel("UPDATE using rupd="
-						+ data.updateRowMeta.getString(updatePrevVersionRow));
-			
-			data.db.setValues(data.updateRowMeta, updatePrevVersionRow, data.prepStatementUpdatePrevVersion);
-			data.db.insertRow(data.prepStatementUpdatePrevVersion, !isAutoIncrement(), false);
-			
-			// UPDATE EXISTING RECORD IN CACHE!
-			if (meta.getCacheSize() >= 0) 
-			{
-				cache.db.setValues(data.updateRowMeta, updatePrevVersionRow, cache.prepStatementUpdatePrevVersion);
-				cache.db.insertRow(cache.prepStatementUpdatePrevVersion, !isAutoIncrement(), false);
-			}
-		}
-		
-		if (log.isDebug())
-			logDebug("rins, size=" + data.insertRowMeta.size() + ", values="
-					+ data.insertRowMeta.getString(insertRow));
-
-		commitcounter++;
-
+		// check for logging level
 		if (log.isDebug())
 			logDebug("Row inserted!");
+		
+		// get generated key if auto increment is true
 		if (isAutoIncrement()) {
 			try 
 			{
@@ -1317,6 +1218,95 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 						e);
 			}
 		}
+		
+		// INSERT NEW VALUE INTO CACHE!
+		if (meta.getCacheSize() >= 0) 
+		{
+			Object[] cacheInsertRow = new Object[cache.insertRowMeta.size()];
+			if (isAutoIncrement())
+			{
+				cacheInsertRow[0] = technicalKey;
+				System.arraycopy(insertRow, 0, cacheInsertRow, 1, insertRow.length);
+			} else cacheInsertRow = insertRow;
+			
+			cache.db.setValues(cache.insertRowMeta, cacheInsertRow, cache.prepStatementInsert);
+			cache.db.insertRow(cache.prepStatementInsert, true, false);
+		}
+
+		if (!newEntry) // we have to update the previous version in the dimension!
+		{
+			/*
+			 * UPDATE d_customer SET dateto = val_datfrom , last_updated = <now>
+			 * , last_version = false WHERE keylookup[] = keynrs[] AND
+			 * techkey = returnrowtechkey;
+			 */
+			 
+			Object[] updateRow = new Object[data.updateRowMeta.size()];
+			int updateIndex = 0;
+			
+			switch (data.startDateChoice) {
+			case DimensionLookupMeta.START_DATE_ALTERNATIVE_NONE:
+				updateRow[updateIndex++] = dateFrom;
+				break;
+			case DimensionLookupMeta.START_DATE_ALTERNATIVE_SYSDATE:
+				updateRow[updateIndex++] = new Date();
+				break;
+			case DimensionLookupMeta.START_DATE_ALTERNATIVE_START_OF_TRANS:
+				updateRow[updateIndex++] = getTrans().getCurrentDate();
+				break;
+			case DimensionLookupMeta.START_DATE_ALTERNATIVE_NULL:
+				updateRow[updateIndex++] = null;
+				break;
+			case DimensionLookupMeta.START_DATE_ALTERNATIVE_COLUMN_VALUE:
+				updateRow[updateIndex++] = data.inputRowMeta.getDate(row,
+						data.startDateFieldIndex);
+				break;
+			default:
+				throw new KettleStepException(BaseMessages.getString(
+						"DimensionLookup.Exception.IllegalStartDateSelection",
+						Integer.toString(data.startDateChoice)));
+			}
+
+			// The special update fields...
+			//
+			for (int i = 0; i < meta.getFieldUpdate().length; i++) {
+				switch (meta.getFieldUpdate()[i]) {
+				case DimensionLookupMeta.TYPE_UPDATE_DATE_INSUP:
+					updateRow[updateIndex++] = new Date();
+					break;
+				case DimensionLookupMeta.TYPE_UPDATE_LAST_VERSION:
+					updateRow[updateIndex++] = Boolean.FALSE;
+					break; // Never the last version on this update
+				case DimensionLookupMeta.TYPE_UPDATE_DATE_UPDATED:
+					updateRow[updateIndex++] = new Date();
+					break;
+				default:
+					break;
+				}
+			}
+
+			updateRow[updateIndex++] = returnRowTechnicalKey;
+
+			if (log.isRowLevel())
+				logRowlevel("UPDATE using rupd="
+						+ data.updateRowMeta.getString(updateRow));
+			
+			data.db.setValues(data.updateRowMeta, updateRow, data.prepStatementUpdatePrevVersion);
+			data.db.insertRow(data.prepStatementUpdatePrevVersion, !isAutoIncrement(), false);
+			
+			// UPDATE EXISTING RECORD IN CACHE!
+			if (meta.getCacheSize() >= 0) 
+			{
+				cache.db.setValues(cache.updateRowMeta, updateRow, cache.prepStatementUpdatePrevVersion);
+				cache.db.insertRow(cache.prepStatementUpdatePrevVersion, true, false);
+			}
+		}
+		
+		if (log.isDebug())
+			logDebug("rins, size=" + data.insertRowMeta.size() + ", values="
+					+ data.insertRowMeta.getString(insertRow));
+
+		commitcounter++;
 
 		return technicalKey;
 	}
@@ -1415,7 +1405,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			switch (meta.getFieldUpdate()[i]) {
 			case DimensionLookupMeta.TYPE_UPDATE_DATE_INSUP:
 			case DimensionLookupMeta.TYPE_UPDATE_DATE_UPDATED:
-				dimensionUpdateRow[updateIndex++] = getTrans().getCurrentDate();
+				dimensionUpdateRow[updateIndex++] = new Date(); //getTrans().getCurrentDate();
 				break;
 			default:
 				break;
@@ -1429,7 +1419,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		if (meta.getCacheSize() > 0)
 		{
 			cache.db.setValues(data.dimensionUpdateRowMeta, dimensionUpdateRow, cache.prepStatementDimensionUpdate);
-			cache.db.insertRow(cache.prepStatementDimensionUpdate, !isAutoIncrement(), false);
+			cache.db.insertRow(cache.prepStatementDimensionUpdate, true, false);
 		}
 		commitcounter++;
 	}
@@ -1542,7 +1532,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		if (meta.getCacheSize()>0)
 		{
 			cache.db.setValues(data.punchThroughRowMeta, punchThroughRow, cache.prepStatementPunchThrough); // set values for update
-			cache.db.insertRow(cache.prepStatementPunchThrough, !isAutoIncrement(), false);
+			cache.db.insertRow(cache.prepStatementPunchThrough, true, false);
 		}
 		
 		commitcounter++;
@@ -1598,7 +1588,6 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 				}
 
 				data.db.execStatement(databaseMeta.stripCR(isql));
-				cache.db.execStatement(databaseMeta.stripCR(isql));
 			} catch (KettleException e) {
 				throw new KettleDatabaseException(
 						"Error inserting 'unknown' row in dimension ["
@@ -1612,6 +1601,9 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		DatabaseMeta databaseMeta = meta.getDatabaseMeta();
 		RowMetaInterface insertRowMeta = new RowMeta();
 		RowMetaInterface inputRowMeta = data.inputRowMeta;
+		
+		RowMetaInterface dimInsertRowMeta = new RowMeta();
+		RowMetaInterface cacheInsertRowMeta = new RowMeta();
 
 		/*
 		 * Construct the SQL statement...
@@ -1623,20 +1615,9 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		 */
 
 		String sql = "INSERT INTO " + data.schemaTable + "( ";
-
-		// add technical key
-		if (!isAutoIncrement()) {
-			sql += databaseMeta.quoteField(meta.getKeyField()); // NO AUTOINCREMENT
-			sql += ", ";
-			insertRowMeta.addValueMeta(data.outputRowMeta
-					.getValueMeta(inputRowMeta.size())); // the first return
-															// value after
-															// the input
-		} else {
-			if (databaseMeta.needsPlaceHolder()) {
-				sql += "0, "; // placeholder on informix!
-			}
-		}
+		
+		// add placeholder for technical key
+		sql += " %s ";
 		
 		// add natural keys
 		for (int i = 0; i < meta.getKeyLookup().length; i++) {
@@ -1700,9 +1681,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		sql += ") VALUES (";
 		
 		// add placeholder for technical key
-		if (!isAutoIncrement()) {
-			sql += "?, ";
-		}
+		sql += " %s ";
 		
 		// add placeholders for natural keys
 		for (int i = 0; i < data.keynrs.length; i++) {
@@ -1742,6 +1721,31 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		sql += ", ?, ?, ?";
 
 		sql += " ); ";
+		
+		// create insert sql for dim and cache
+		String dim_insert_sql = "";
+		String cache_insert_sql = "";
+		
+		// add technical key to cache insert sql
+		cache_insert_sql = String.format(sql, databaseMeta.quoteField(meta.getKeyField()) + ", ", "?, ");
+		cacheInsertRowMeta.addValueMeta(data.outputRowMeta
+				.getValueMeta(inputRowMeta.size()));
+		cacheInsertRowMeta.addRowMeta(insertRowMeta);
+		
+		// add technical key to dim insert sql
+		if (!isAutoIncrement()) {
+			dim_insert_sql = String.format(sql, databaseMeta.quoteField(meta.getKeyField()) + ", ", "?, "); // NO AUTOINCREMENT
+			dimInsertRowMeta.addValueMeta(data.outputRowMeta
+					.getValueMeta(inputRowMeta.size())); // the first return
+															// value after
+															// the input
+		} else if (databaseMeta.needsPlaceHolder()) {
+			dim_insert_sql = String.format(sql, "0, ", ""); // placeholder on informix!
+		} else {
+			dim_insert_sql = String.format(sql, "", "");
+		}
+		
+		dimInsertRowMeta.addRowMeta(insertRowMeta);
 
 		/*
 		 * UPDATE d_customer SET dateto = val_datnow, datefrom = originaldatefrom or returnrowupdatedate, 
@@ -1756,15 +1760,7 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		upd_sql += "SET " + databaseMeta.quoteField(meta.getDateTo())
 				+ " = ?" + Const.CR;
 		updateRowMeta.addValueMeta(new ValueMeta(meta.getDateTo(),
-				ValueMetaInterface.TYPE_DATE));
-		
-		// The start of the date range
-		//
-		upd_sql += ", " + databaseMeta.quoteField(meta.getDateFrom())
-				+ " = ?" + Const.CR;
-		updateRowMeta.addValueMeta(new ValueMeta(meta.getDateFrom(),
-				ValueMetaInterface.TYPE_DATE));
-		
+				ValueMetaInterface.TYPE_DATE));		
 
 		// The special update fields...
 		//
@@ -1799,28 +1795,28 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		
 		try {
 			if (getTechKeyCreation() == CREATION_METHOD_AUTOINC) {
-				logDetailed("SQL w/ return keys=[" + sql + "]");
-				data.prepStatementInsert = data.db.getConnection().prepareStatement(databaseMeta.stripCR(sql), Statement.RETURN_GENERATED_KEYS);
+				logDetailed("SQL w/ return keys=[" + dim_insert_sql + "]");
+				data.prepStatementInsert = data.db.getConnection().prepareStatement(databaseMeta.stripCR(dim_insert_sql), Statement.RETURN_GENERATED_KEYS);
 				data.prepStatementUpdatePrevVersion = data.db.getConnection().prepareStatement(databaseMeta.stripCR(upd_sql));
-				
-				cache.prepStatementInsert = cache.db.getConnection().prepareStatement(databaseMeta.stripCR(sql), Statement.RETURN_GENERATED_KEYS);
-				cache.prepStatementUpdatePrevVersion = cache.db.getConnection().prepareStatement(databaseMeta.stripCR(upd_sql));
 			} else {
-				logDetailed("SQL=[" + sql + "]");
-				data.prepStatementInsert = data.db.getConnection().prepareStatement(databaseMeta.stripCR(sql));
+				logDetailed("SQL=[" + dim_insert_sql + "]");
+				data.prepStatementInsert = data.db.getConnection().prepareStatement(databaseMeta.stripCR(dim_insert_sql));
 				data.prepStatementUpdatePrevVersion = data.db.getConnection().prepareStatement(databaseMeta.stripCR(upd_sql));
-				
-				cache.prepStatementInsert = cache.db.getConnection().prepareStatement(databaseMeta.stripCR(sql));
-				cache.prepStatementUpdatePrevVersion = cache.db.getConnection().prepareStatement(databaseMeta.stripCR(upd_sql));
 			}
+			
+			cache.prepStatementInsert = cache.db.getConnection().prepareStatement(databaseMeta.stripCR(cache_insert_sql));
+			cache.prepStatementUpdatePrevVersion = cache.db.getConnection().prepareStatement(databaseMeta.stripCR(upd_sql));
 		} catch (SQLException ex) {
 			throw new KettleDatabaseException(
 					"Unable to prepare dimension insert :" + Const.CR + sql + Const.CR + upd_sql,
 					ex);
 		}
 		
-		data.insertRowMeta = insertRowMeta;
+		data.insertRowMeta = dimInsertRowMeta;
 		data.updateRowMeta = updateRowMeta;
+		
+		cache.insertRowMeta = cacheInsertRowMeta;
+		cache.updateRowMeta = updateRowMeta;
 	}
 	public boolean init(StepMetaInterface smi, StepDataInterface sdi) {
 		meta = (DimensionLookupMeta) smi;

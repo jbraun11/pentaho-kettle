@@ -23,11 +23,11 @@
 package org.pentaho.di.trans.steps.dimensionlookup;
 
 import java.sql.*;
-import java.util.Arrays;
 
 import org.pentaho.di.core.database.Database;
 import org.pentaho.di.core.database.DatabaseMeta;
 import org.pentaho.di.core.exception.KettleDatabaseException;
+import org.pentaho.di.core.row.RowMetaInterface;
 
 /**
  * @author John
@@ -35,8 +35,6 @@ import org.pentaho.di.core.exception.KettleDatabaseException;
  */
 public class DimensionCache
 {
-	private DimensionLookupMeta meta;
-	private DimensionLookupData data;
 	private DimensionLookup dl;
 	
     public PreparedStatement prepStatementLookup;
@@ -44,6 +42,11 @@ public class DimensionCache
     public PreparedStatement prepStatementUpdatePrevVersion;
     public PreparedStatement prepStatementDimensionUpdate;
     public PreparedStatement prepStatementPunchThrough;
+    
+    public RowMetaInterface insertRowMeta;
+    public RowMetaInterface updateRowMeta;
+    public RowMetaInterface dimensionUpdateRowMeta;
+    public RowMetaInterface punchThroughRowMeta;
 	
 	public boolean initialLoad;
 	
@@ -52,8 +55,6 @@ public class DimensionCache
 	public DimensionCache(DimensionLookup dimensionLookup, DimensionLookupMeta meta, DimensionLookupData data) throws SQLException, KettleDatabaseException
 	{
 		this.dl = dimensionLookup;
-		this.meta = meta;
-		this.data = data;
 		
 		DatabaseMeta dbMeta = new DatabaseMeta();
 		dbMeta.setDatabaseType("H2");
@@ -66,10 +67,14 @@ public class DimensionCache
 		db = new Database(dimensionLookup, dbMeta);	      
 	    db.connect();
 	    
+	    // create schema ddl
 	    String createSchema = "CREATE SCHEMA " + data.realSchemaName;
 	    
-	    String ddl = db.getDDL(data.schemaTable.replace("\"", ""), meta.getTableFields(), meta.getKeyField(), 
-				(meta.getTechKeyCreation() == DimensionLookupMeta.CREATION_METHOD_AUTOINC), meta.getKeyField(), false);
+	    // create table ddl
+	    String tableDDL = db.getDDL(data.schemaTable.replace("\"", ""), meta.getTableFields(), meta.getKeyField(), 
+				false, meta.getKeyField(), false);
+	    
+	    // run create schema statement, do not fail if schema already exists
 	    try
 	    {
 	    	db.getConnection().createStatement().execute(createSchema);
@@ -77,11 +82,19 @@ public class DimensionCache
 	    catch (Exception e) {
 	    	e.getMessage();
 	    }
-
-	    db.getConnection().createStatement().execute(ddl);
+	    
+	    // create table in h2 memory db
+	    db.getConnection().createStatement().execute(tableDDL);
+	    
+	    // create index ddl
+	    String indexDDL = db.getCreateIndexStatement(data.realSchemaName, data.realTableName, "natural key index"
+	    			, meta.getKeyLookup(), false, false, false, false).replace("INDEX", "HASH INDEX");
+	    
+	    // create index on cache table
+	    db.getConnection().createStatement().execute(indexDDL);
 	}
 	
-	public void setRowCache(ResultSet rowSet) throws KettleDatabaseException
+	public void setRowCache(ResultSet rowSet, DimensionLookupData data) throws KettleDatabaseException, SQLException
 	{
 		boolean stop = false;
 		
@@ -96,28 +109,25 @@ public class DimensionCache
 				Object[] row = data.db.getRow(rowSet, null, data.returnRowMeta);
 				if (row != null)
 				{
-					if (meta.getTechKeyCreation().equals(DimensionLookupMeta.CREATION_METHOD_AUTOINC))
+					db.setValues(insertRowMeta, row, prepStatementInsert);
+					db.insertRow(prepStatementInsert, true, false);
+					
+					i++;					
+					long endTime = System.currentTimeMillis();
+					long totalTime = endTime - startTime;
+					
+					if ((float)totalTime/(float)60000 > j)
 					{
-						row = Arrays.copyOfRange(row, 1, row.length);
+						dl.logBasic("Current rows in cache: " + i);
+						j++;
 					}
-					db.setValues(data.insertRowMeta, row, prepStatementInsert);
-					db.insertRow(prepStatementInsert, !(meta.getTechKeyCreation().equals(DimensionLookupMeta.CREATION_METHOD_AUTOINC)), false);
 				}
 				else
 				{
 					stop = true;
 				}
-				
-				i++;
-				long endTime = System.currentTimeMillis();
-				long totalTime = endTime - startTime;
-				
-				if ((float)totalTime/(float)60000 > j)
-				{
-					dl.logBasic("Current rows in cache: " + i);
-					j++;
-				}
 			}
+			
 			long endTime = System.currentTimeMillis();
 			long totalTime = endTime - startTime;
 			dl.logBasic("Caching complete...");
@@ -129,12 +139,5 @@ public class DimensionCache
 				initialLoad = true;
 			}
 		}
-	}
-	
-	public Object[] lookupRow(Object[] inputRow)
-	{
-		Object[] returnRow = null;
-		
-		return returnRow;
 	}
 }

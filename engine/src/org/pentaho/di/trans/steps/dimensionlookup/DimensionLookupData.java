@@ -84,8 +84,10 @@ public class DimensionLookupData extends BaseStepData implements StepDataInterfa
 
 	public int[]	preloadKeyIndexes;
 
-	public int	preloadFromDateIndex;
-	public int	preloadToDateIndex;
+	public int techKeyIndex;
+	public int versionIndex;
+	public int	fromDateIndex;
+	public int	toDateIndex;
 
 	public List<Integer>	preloadIndexes;
 
