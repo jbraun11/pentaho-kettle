@@ -303,7 +303,9 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			
 			commitcounter = 0;
 		}
-		incrementLinesInput();
+		
+		cache.checkCacheSize();
+
 		return true;
 	}
 
@@ -390,57 +392,34 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 		try {
 			DatabaseMeta databaseMeta = meta.getDatabaseMeta();
 			String sql;
+	
+			// tk, version, from, to, natural keys, retrieval fields...
+			//
+			sql = "SELECT "
+					+ databaseMeta.quoteField(meta.getKeyField());
+
+			// add all natural keys
+			for (int i = 0; i < meta.getKeyLookup().length; i++) {
+				sql += ", " + meta.getKeyLookup()[i]; // the natural key field
+														// in the table
+			}
+			// add all lookup fields
+			for (int i = 0; i < meta.getFieldLookup().length; i++) {
+				sql += ", " + meta.getFieldLookup()[i]; // the extra fields to
+														// retrieve...
+			}
+			
+			// only had version if updating the dimension
 			if (meta.isUpdate())
 			{
-				
-	
-				// tk, version, from, to, natural keys, retrieval fields...
-				//
-				sql = "SELECT "
-						+ databaseMeta.quoteField(meta.getKeyField());
-
-				for (int i = 0; i < meta.getKeyLookup().length; i++) {
-					sql += ", " + meta.getKeyLookup()[i]; // the natural key field
-															// in the table
-				}
-				for (int i = 0; i < meta.getFieldLookup().length; i++) {
-					sql += ", " + meta.getFieldLookup()[i]; // the extra fields to
-															// retrieve...
-				}
 				sql += ", " + databaseMeta.quoteField(meta.getVersionField());
-				sql += ", " + databaseMeta.quoteField(meta.getDateFrom()); // extra
-																			// info
-																			// in
-																			// cache
-				sql += ", " + databaseMeta.quoteField(meta.getDateTo()); // extra
-																			// info
-																			// in
-																			// cache
-	
-				sql += " FROM " + data.schemaTable;
-				sql += " ORDER BY " + meta.getVersionField();
 			}
-			else
-			{
-				// tk, version, from, to, natural keys, retrieval fields...
-				//
-				sql = "SELECT " + databaseMeta.quoteField( meta.getKeyField() );
-				
-				// sql+=", "+databaseMeta.quoteField(meta.getVersionField());
-				for ( int i = 0; i < meta.getKeyLookup().length; i++ ) 
-				{
-					sql += ", " + meta.getKeyLookup()[i]; // the natural key field in the table
-				}
-				
-				for ( int i = 0; i < meta.getFieldLookup().length; i++ ) 
-				{
-					sql += ", " + meta.getFieldLookup()[i]; // the extra fields to retrieve...
-				}
-				
-				sql += ", " + databaseMeta.quoteField( meta.getDateFrom() ); // extra info in cache
-				sql += ", " + databaseMeta.quoteField( meta.getDateTo() ); // extra info in cache
-				sql += " FROM " + data.schemaTable;
-			}
+			// add date from and to fields
+			sql += ", " + databaseMeta.quoteField(meta.getDateFrom()); 
+			sql += ", " + databaseMeta.quoteField(meta.getDateTo()); 
+
+			// add from statement
+			sql += " FROM " + data.schemaTable;
 			
 			logDetailed("Pre-loading cache by reading from database with: "
 					+ Const.CR + sql + Const.CR);
@@ -1667,12 +1646,16 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			}
 		}
 
-		// add version, date_from, date_to
-		sql += ", " + databaseMeta.quoteField(meta.getVersionField())
-				+ ", " + databaseMeta.quoteField(meta.getDateFrom())
-				+ ", " + databaseMeta.quoteField(meta.getDateTo());
-		insertRowMeta.addValueMeta(new ValueMeta(meta.getVersionField(),
-				ValueMetaInterface.TYPE_INTEGER));
+		// add version field
+		if (meta.isUpdate()) {
+			sql += ", " + databaseMeta.quoteField(meta.getVersionField());
+			insertRowMeta.addValueMeta(new ValueMeta(meta.getVersionField(),
+					ValueMetaInterface.TYPE_INTEGER));
+		}
+		
+		// add from and to date fields
+		sql += ", " + databaseMeta.quoteField(meta.getDateFrom())
+				+ ", " + databaseMeta.quoteField(meta.getDateTo());		
 		insertRowMeta.addValueMeta(new ValueMeta(meta.getDateFrom(),
 				ValueMetaInterface.TYPE_DATE));
 		insertRowMeta.addValueMeta(new ValueMeta(meta.getDateTo(),
@@ -1717,8 +1700,12 @@ public class DimensionLookup extends BaseStep implements StepInterface {
 			}
 		}
 
-		// add placeholders for version, date_from, date_to
-		sql += ", ?, ?, ?";
+		// add placeholder for version
+		if (meta.isUpdate()) {
+			sql += ", ?";
+		}
+		// add placeholders for date_from, date_to
+		sql += ", ?, ?";
 
 		sql += " ); ";
 		

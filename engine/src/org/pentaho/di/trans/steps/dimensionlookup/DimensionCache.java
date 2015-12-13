@@ -36,6 +36,8 @@ import org.pentaho.di.core.row.RowMetaInterface;
 public class DimensionCache
 {
 	private DimensionLookup dl;
+	private int cacheSize;
+	private String schemaTable;
 	
     public PreparedStatement prepStatementLookup;
     public PreparedStatement prepStatementInsert;
@@ -55,6 +57,8 @@ public class DimensionCache
 	public DimensionCache(DimensionLookup dimensionLookup, DimensionLookupMeta meta, DimensionLookupData data) throws SQLException, KettleDatabaseException
 	{
 		this.dl = dimensionLookup;
+		this.cacheSize = meta.getCacheSize();
+		this.schemaTable = data.schemaTable.replace("\"", "");
 		
 		DatabaseMeta dbMeta = new DatabaseMeta();
 		dbMeta.setDatabaseType("H2");
@@ -71,7 +75,7 @@ public class DimensionCache
 	    String createSchema = "CREATE SCHEMA " + data.realSchemaName;
 	    
 	    // create table ddl
-	    String tableDDL = db.getDDL(data.schemaTable.replace("\"", ""), meta.getTableFields(), meta.getKeyField(), 
+	    String tableDDL = db.getDDL(schemaTable, meta.getTableFields(), meta.getKeyField(), 
 				false, meta.getKeyField(), false);
 	    
 	    // run create schema statement, do not fail if schema already exists
@@ -139,5 +143,9 @@ public class DimensionCache
 				initialLoad = true;
 			}
 		}
+	}
+
+	public void checkCacheSize() {
+			
 	}
 }
