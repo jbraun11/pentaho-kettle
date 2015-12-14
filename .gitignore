@@ -23,3 +23,7 @@ build-res/module-scripts/
 *.ear
 *.iml
 /*.launch
+/engine/.attach_pid*
+*.t41.lob.db
+plugins/*/package-pom.xml
+assembly/package-res/samples/db/sampledb.h2.db
